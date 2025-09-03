@@ -13,8 +13,8 @@
       --grid-gap: clamp(8px, 2vw, 14px);
       --cell-radius: 12px;
     }
-    html,body{height:100%;margin:0;font-family:Inter, system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial;color:var(--text); background:#ffffff}
-    body{display:flex; align-items:center; justify-content:center; padding:var(--outer-padding)}
+    html,body{height:100%;margin:0;font-family:Inter, system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial;color:var(--text); background:#ffffff;overscroll-behavior-y:none;}
+    body{display:flex; align-items:center; justify-content:center; padding:var(--outer-padding);}
 
     .panel{width:min(100%, var(--panel-max-width)); background:var(--panel); border-radius:16px; padding:clamp(12px,3vw,20px); box-shadow:0 12px 40px rgba(2,6,23,0.06); position:relative}
     header{display:flex; align-items:center; gap:12px; flex-wrap:wrap}
@@ -69,7 +69,7 @@
   <div class="panel" id="panel">
     <header>
       <h1>スクラッチくじ（3×3）</h1>
-      <div class="small">幅が変わっても崩れないレイアウト。全てのマスを開けると当選判定（なければ「はずれ」）。</div>
+      <div class="small">幅が変わっても崩れないレイアウト。全てのマスを開けると当選判定（なければ「はずれ」）i。</div>
     </header>
 
     <div class="content">
@@ -108,7 +108,7 @@
 
     /***** スクラッチ設定 *****/
     const SCRATCH_RADIUS = 18;       // こする太さ
-    const REVEAL_THRESHOLD = 0.45;   // 露出扱いの割合
+    const REVEAL_THRESHOLD = 0.66;   // 露出扱いの割合
     const CONFETTI_COLORS = ['#ff4d6d','#ffd166','#8b5cf6','#34d399','#60a5fa'];
     const CONFETTI_DURATION = 4500;
 
@@ -203,46 +203,135 @@
 
     /***** スクラッチ処理 *****/
     function initializeScratchCanvas(canvas, index){
-      const ctx = canvas.getContext('2d');
-      const ratio = window.devicePixelRatio || 1;
-      ctx.setTransform(ratio,0,0,ratio,0,0);
+  const ctx = canvas.getContext('2d');
+  const ratio = window.devicePixelRatio || 1;
+  ctx.setTransform(ratio,0,0,ratio,0,0);
 
-      const cssW = canvas.width / ratio; const cssH = canvas.height / ratio;
+  const cssW = canvas.width / ratio;
+  const cssH = canvas.height / ratio;
 
-      // 覆いを確実に再描画（iOS/SafariのBFCache対策：必ず source-over でフル塗り）
-      ctx.globalCompositeOperation = 'source-over';
-      ctx.clearRect(0,0,cssW,cssH);
-      ctx.fillStyle = '#c1c7cc';
-      ctx.fillRect(0,0,cssW,cssH);
-      ctx.fillStyle = '#374151'; ctx.font = '700 14px sans-serif'; ctx.textAlign='center'; ctx.textBaseline='middle';
-      ctx.fillText('こすって削る', cssW/2, cssH/2);
-      canvas.style.opacity = '1';
-      canvas.style.pointerEvents = 'auto';
+  // 覆いを確実に再描画
+  ctx.globalCompositeOperation = 'source-over';
+  ctx.clearRect(0,0,cssW,cssH);
+  ctx.fillStyle = '#c1c7cc';
+  ctx.fillRect(0,0,cssW,cssH);
+  ctx.fillStyle = '#374151'; ctx.font = '700 14px sans-serif'; ctx.textAlign='center'; ctx.textBaseline='middle';
+  ctx.fillText('こすって削る', cssW/2, cssH/2);
+  canvas.style.opacity = '1';
+  canvas.style.pointerEvents = 'auto';
 
-      // 既存ハンドラ掃除
-      if(canvas._pointerDownHandler) canvas.removeEventListener('pointerdown', canvas._pointerDownHandler);
-      if(canvas._touchStartHandler) canvas.removeEventListener('touchstart', canvas._touchStartHandler);
-      if(canvas._pointerMoveHandler) canvas.removeEventListener('pointermove', canvas._pointerMoveHandler);
-      if(canvas._touchMoveHandler) canvas.removeEventListener('touchmove', canvas._touchMoveHandler);
-      if(canvas._pointerUpHandler) window.removeEventListener('pointerup', canvas._pointerUpHandler);
-      if(canvas._touchEndHandler) window.removeEventListener('touchend', canvas._touchEndHandler);
+  // ハンドラを一旦掃除
+  if(canvas._pointerDownHandler) canvas.removeEventListener('pointerdown', canvas._pointerDownHandler);
+  if(canvas._touchStartHandler) canvas.removeEventListener('touchstart', canvas._touchStartHandler);
+  if(canvas._pointerMoveHandler) canvas.removeEventListener('pointermove', canvas._pointerMoveHandler);
+  if(canvas._touchMoveHandler) canvas.removeEventListener('touchmove', canvas._touchMoveHandler);
+  if(canvas._pointerUpHandler) window.removeEventListener('pointerup', canvas._pointerUpHandler);
+  if(canvas._touchEndHandler) window.removeEventListener('touchend', canvas._touchEndHandler);
 
-      let drawing = false; let last = null;
-      function getLocalPosFromEvent(e){ const rect = canvas.getBoundingClientRect(); if(e.touches && e.touches.length){ return {x:e.touches[0].clientX-rect.left, y:e.touches[0].clientY-rect.top}; } return {x:e.clientX-rect.left, y:e.clientY-rect.top}; }
-      function scratchAt(x,y,r){ ctx.globalCompositeOperation = 'destination-out'; ctx.beginPath(); ctx.arc(x,y,r,0,Math.PI*2); ctx.fill(); ctx.closePath(); ctx.globalCompositeOperation = 'source-over'; }
+  // 新ルール：開始閾値（px） — これより小さい動きでは削り開始しない
+  const START_SCRATCH_THRESHOLD = 8; // 調整可（大きくすると誤操作減るがレスポンスは遅れる）
 
-      const pointerMoveHandler = (e)=>{ if(!drawing) return; e.preventDefault(); const p=getLocalPosFromEvent(e); const dx=p.x-last.x, dy=p.y-last.y; const dist=Math.hypot(dx,dy); const steps=Math.max(Math.ceil(dist/(SCRATCH_RADIUS/2)),1); for(let s=0;s<steps;s++){ const t=s/steps; scratchAt(last.x+dx*t,last.y+dy*t,SCRATCH_RADIUS);} last=p; if(Math.random()<0.12) checkRevealPercent(index); };
-      const touchMoveHandler = (e)=> pointerMoveHandler(e);
-      const pointerUpHandler = ()=>{ if(!drawing) return; drawing=false; canvas.removeEventListener('pointermove', pointerMoveHandler); window.removeEventListener('pointerup', pointerUpHandler); canvas.removeEventListener('touchmove', touchMoveHandler); window.removeEventListener('touchend', touchEndHandler); checkRevealPercent(index); };
-      const touchEndHandler = ()=> pointerUpHandler();
-      const pointerDownHandler = (e)=>{ e.preventDefault(); drawing=true; last=getLocalPosFromEvent(e); scratchAt(last.x,last.y,SCRATCH_RADIUS); canvas.addEventListener('pointermove', pointerMoveHandler,{passive:false}); window.addEventListener('pointerup', pointerUpHandler); };
-      const touchStartHandler = (e)=>{ e.preventDefault(); drawing=true; last=getLocalPosFromEvent(e); scratchAt(last.x,last.y,SCRATCH_RADIUS); canvas.addEventListener('touchmove', touchMoveHandler,{passive:false}); window.addEventListener('touchend', touchEndHandler); };
+  let drawing = false;
+  let started = false; // 実際に描画を開始したか
+  let last = null;
+  let downPos = null;
 
-      canvas._pointerMoveHandler=pointerMoveHandler; canvas._touchMoveHandler=touchMoveHandler; canvas._pointerUpHandler=pointerUpHandler; canvas._touchEndHandler=touchEndHandler; canvas._pointerDownHandler=pointerDownHandler; canvas._touchStartHandler=touchStartHandler;
-
-      canvas.addEventListener('pointerdown', pointerDownHandler, {passive:false});
-      canvas.addEventListener('touchstart', touchStartHandler, {passive:false});
+  function getLocalPosFromEvent(e){
+    const rect = canvas.getBoundingClientRect();
+    if(e.touches && e.touches.length){
+      return {x: e.touches[0].clientX - rect.left, y: e.touches[0].clientY - rect.top};
     }
+    return {x: e.clientX - rect.left, y: e.clientY - rect.top};
+  }
+
+  function scratchAt(ctx, x, y, r){
+    ctx.globalCompositeOperation = 'destination-out';
+    ctx.beginPath();
+    ctx.arc(x, y, r, 0, Math.PI*2);
+    ctx.fill();
+    ctx.closePath();
+    ctx.globalCompositeOperation = 'source-over';
+  }
+
+  // pointermove: まず閾値をチェック、閾値超えたら描画開始
+  const pointerMoveHandler = (e) => {
+    if(!downPos) return;
+    e.preventDefault();
+    const p = getLocalPosFromEvent(e);
+    const dx = p.x - downPos.x;
+    const dy = p.y - downPos.y;
+    const dist = Math.hypot(dx, dy);
+    if(!started){
+      if(dist >= START_SCRATCH_THRESHOLD){
+        // ユーザーは「削り」を意図していると判断して描画モードへ
+        started = true;
+        drawing = true;
+        last = p;
+        scratchAt(ctx, last.x, last.y, SCRATCH_RADIUS);
+      } else {
+        // まだ閾値に到達していないので描画しない（これが誤消し対策）
+        return;
+      }
+    } else {
+      // 通常の描画処理
+      const dx2 = p.x - last.x, dy2 = p.y - last.y;
+      const dist2 = Math.hypot(dx2, dy2);
+      const steps = Math.max(Math.ceil(dist2 / (SCRATCH_RADIUS/2)), 1);
+      for(let s=0;s<steps;s++){
+        const t = s/steps;
+        scratchAt(ctx, last.x + dx2*t, last.y + dy2*t, SCRATCH_RADIUS);
+      }
+      last = p;
+    }
+    // 少しだけ頻度を落として判定
+    if(Math.random() < 0.12) checkRevealPercent(index);
+  };
+
+  const touchMoveHandler = (e) => pointerMoveHandler(e);
+
+  const pointerUpHandler = () => {
+    if(!downPos) return;
+    drawing = false;
+    started = false;
+    downPos = null;
+    last = null;
+    canvas.removeEventListener('pointermove', pointerMoveHandler);
+    window.removeEventListener('pointerup', pointerUpHandler);
+    canvas.removeEventListener('touchmove', touchMoveHandler);
+    window.removeEventListener('touchend', touchEndHandler);
+    // 判定
+    checkRevealPercent(index);
+  };
+
+  const touchEndHandler = () => pointerUpHandler();
+
+  // pointerdown / touchstart: すぐに描かない。downPos を記録するだけ
+  const pointerDownHandler = (e) => {
+    e.preventDefault();
+    downPos = getLocalPosFromEvent(e);
+    // イベント登録（move/up）
+    canvas.addEventListener('pointermove', pointerMoveHandler, {passive:false});
+    window.addEventListener('pointerup', pointerUpHandler);
+  };
+
+  const touchStartHandler = (e) => {
+    e.preventDefault();
+    downPos = getLocalPosFromEvent(e);
+    canvas.addEventListener('touchmove', touchMoveHandler, {passive:false});
+    window.addEventListener('touchend', touchEndHandler);
+  };
+
+  canvas._pointerMoveHandler = pointerMoveHandler;
+  canvas._touchMoveHandler = touchMoveHandler;
+  canvas._pointerUpHandler = pointerUpHandler;
+  canvas._touchEndHandler = touchEndHandler;
+  canvas._pointerDownHandler = pointerDownHandler;
+  canvas._touchStartHandler = touchStartHandler;
+
+  canvas.addEventListener('pointerdown', pointerDownHandler, {passive:false});
+  canvas.addEventListener('touchstart', touchStartHandler, {passive:false});
+}
+
 
     function checkRevealPercent(index){ const entry = cellCanvases[index]; const canvas = entry.canvas; const ctx = canvas.getContext('2d'); try{ const w = canvas.width; const h = canvas.height; const imageData = ctx.getImageData(0,0,w,h).data; let trans=0; let total=0; const step = 4 * 6; for(let i=3;i<imageData.length;i+=step){ if(imageData[i]===0) trans++; total++; } const cleared = trans/Math.max(total,1); if(cleared >= REVEAL_THRESHOLD){ if(!currentCard.revealed[index]){ currentCard.revealed[index] = true; hideCanvas(canvas); const allOpen = currentCard.revealed.every(v=>v===true); if(allOpen && !currentCard.announced){ currentCard.announced = true; announceResult(); } } } }catch(err){ console.warn('checkReveal failed', err); } }
 
