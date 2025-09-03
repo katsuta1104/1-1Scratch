@@ -1,1 +1,275 @@
+<!doctype html>
+<html lang="ja">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover" />
+  <title>スクラッチくじ（3×3）— レスポンシブ + リロード対策</title>
+  <style>
+    :root{
+      --accent:#8b5cf6; --muted:#6b7280; --panel:#ffffff; --text:#0b1220;
+      /* サイズ調整用（必要ならここを変更） */
+      --panel-max-width: 880px;   /* 全体の最大幅 */
+      --outer-padding: clamp(12px, 4vw, 28px);
+      --grid-gap: clamp(8px, 2vw, 14px);
+      --cell-radius: 12px;
+    }
+    html,body{height:100%;margin:0;font-family:Inter, system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial;color:var(--text); background:#ffffff}
+    body{display:flex; align-items:center; justify-content:center; padding:var(--outer-padding)}
 
+    .panel{width:min(100%, var(--panel-max-width)); background:var(--panel); border-radius:16px; padding:clamp(12px,3vw,20px); box-shadow:0 12px 40px rgba(2,6,23,0.06); position:relative}
+    header{display:flex; align-items:center; gap:12px; flex-wrap:wrap}
+    header h1{margin:0;font-size:clamp(18px, 2.4vw, 22px)}
+    .small{font-size:clamp(12px, 1.5vw, 13px); color:var(--muted)}
+
+    .content{display:grid; grid-template-columns: 1fr minmax(240px, 0.9fr); align-items:start; gap:clamp(12px,3vw,20px); margin-top:clamp(10px,2vw,16px)}
+
+    /* ========== グリッド（崩れ防止） ========== */
+    .grid-wrapper{display:flex; justify-content:center}
+    .grid{
+      display:grid; grid-template-columns:repeat(3, 1fr); gap:var(--grid-gap);
+      width:min(92vw, 560px); /* ビューポートに合わせて縮む／伸びる */
+    }
+    .cell{position:relative; border-radius:var(--cell-radius); overflow:hidden; background:#f8fafc; box-shadow:0 6px 18px rgba(11,18,32,0.03); cursor:pointer}
+    .cell-inner{position:relative; aspect-ratio:1/1;}
+
+    .art{position:absolute; inset:0; display:flex; align-items:center; justify-content:center; font-weight:800; letter-spacing:0.6px; font-size:clamp(14px, 2vw, 18px)}
+    .img-1{background:linear-gradient(180deg,#ffe4d6,#ffd7be)}
+    .img-2{background:linear-gradient(180deg,#fff3bf,#ffe8a8)}
+    .img-3{background:linear-gradient(180deg,#d8f5e8,#b7f0d6)}
+    .img-4{background:linear-gradient(180deg,#cfe4ff,#9fd2ff)}
+    .img-5{background:linear-gradient(180deg,#f3f4f6,#e6eef8)}
+
+    canvas.scratch{position:absolute; inset:0; display:block; touch-action:none}
+
+    .meta{min-width:0}
+    .legend{display:flex; gap:8px; flex-wrap:wrap}
+    .legend .item{display:flex; gap:8px; align-items:center; padding:6px 8px; border-radius:8px; background:rgba(11,18,32,0.02)}
+    .swatch{width:28px;height:28px;border-radius:6px}
+
+    .result{margin-top:14px; padding:12px; border-radius:10px; background:rgba(11,18,32,0.02); min-height:64px}
+    .line-highlight{outline:3px solid rgba(139,92,246,0.14); box-shadow:0 8px 24px rgba(139,92,246,0.12)}
+
+    .confetti-overlay{position:absolute; inset:0; pointer-events:none; z-index:40}
+
+    .win-popup{position:absolute; left:50%; top:18%; transform:translateX(-50%); background:linear-gradient(180deg,rgba(255,255,255,0.98),white); padding:16px 20px; border-radius:12px; box-shadow:0 12px 36px rgba(11,18,32,0.12); z-index:50; display:none; text-align:center; width:min(92vw, 460px)}
+    .win-popup.show{display:block}
+    .win-title{font-size:clamp(16px, 2.4vw, 20px); font-weight:800; color:var(--accent); margin-bottom:6px}
+    .win-sub{font-size:clamp(13px, 1.8vw, 14px); color:var(--text)}
+
+    footer{display:flex; justify-content:space-between; align-items:center; margin-top:14px; gap:12px; flex-wrap:wrap}
+
+    /* 狭幅時は縦積み */
+    @media(max-width: 760px){
+      .content{grid-template-columns: 1fr;}
+      .grid{width:min(94vw, 520px)}
+    }
+  </style>
+</head>
+<body>
+  <div class="panel" id="panel">
+    <header>
+      <h1>スクラッチくじ（3×3）</h1>
+      <div class="small">幅が変わっても崩れないレイアウト。全てのマスを開けると当選判定（なければ「はずれ」）。</div>
+    </header>
+
+    <div class="content">
+      <div class="grid-wrapper">
+        <div class="grid" id="grid"></div>
+      </div>
+
+      <div class="meta">
+        <div class="legend" id="legend"></div>
+        <div class="result" id="result">ページを開くとカードが表示されます。こすって削ってください。</div>
+        <div style="margin-top:10px" class="small">カードID: <span id="cardId">-</span></div>
+      </div>
+    </div>
+
+    <div class="confetti-overlay" id="confetti-overlay"></div>
+
+    <div class="win-popup" id="win-popup">
+      <div class="win-title" id="win-title">当選おめでとうございます！</div>
+      <div class="win-sub" id="win-sub">1-1のおにぎりを買っていただいてありがとうございました!</div>
+    </div>
+
+  </div>
+
+  <script>
+    /***** データ定義 *****/
+    window.IMAGES = [
+      {id:'image1', label:'image1', rank:1, path:'assets/image1.png'},
+      {id:'image2', label:'image2', rank:2, path:'assets/image2.png'},
+      {id:'image3', label:'image3', rank:3, path:'assets/image3.png'},
+      {id:'image4', label:'image4', rank:4, path:'assets/image4.png'},
+      {id:'image5', label:'image5', rank:5, path:'assets/image5.png'}
+    ];
+
+    const DEFAULT_PROBS = { image1:0.01, image2:0.03, image3:0.10, image4:0.30, image5:0.56 };
+    const LINES = [[0,1,2],[3,4,5],[6,7,8],[0,3,6],[1,4,7],[2,5,8],[0,4,8],[2,4,6]];
+
+    /***** スクラッチ設定 *****/
+    const SCRATCH_RADIUS = 18;       // こする太さ
+    const REVEAL_THRESHOLD = 0.45;   // 露出扱いの割合
+    const CONFETTI_COLORS = ['#ff4d6d','#ffd166','#8b5cf6','#34d399','#60a5fa'];
+    const CONFETTI_DURATION = 4500;
+
+    /***** DOM 参照 *****/
+    const gridEl = document.getElementById('grid');
+    const resultEl = document.getElementById('result');
+    const legendEl = document.getElementById('legend');
+    const cardIdEl = document.getElementById('cardId');
+    const confettiOverlay = document.getElementById('confetti-overlay');
+    const winPopup = document.getElementById('win-popup');
+    const winTitle = document.getElementById('win-title');
+    const winSub = document.getElementById('win-sub');
+
+    let currentCard = null;
+    let cellCanvases = [];
+
+    /***** 初期化（リロード・BFCache対策含む） *****/
+    function hardInit(){
+      renderLegend();
+      buildGrid();
+      generateCard();
+      window.addEventListener('resize', resizeAllCanvases, {passive:true});
+    }
+
+    // BFCacheやKoderのプレビューで戻る/再表示されたときに前のキャンバス状態が残る問題への対策
+    window.addEventListener('pageshow', (e)=>{
+      const nav = performance.getEntriesByType('navigation')[0];
+      const isBF = e.persisted || (nav && nav.type === 'back_forward');
+      if(isBF){
+        // DOMを作り直してキャンバスも再描画
+        resetAll();
+        hardInit();
+      }
+    });
+
+    // 通常のロード時も必ず初期化
+    document.addEventListener('DOMContentLoaded', ()=>{
+      hardInit();
+    });
+
+    function resetAll(){
+      gridEl.innerHTML = '';
+      legendEl.innerHTML = '';
+      cellCanvases = [];
+      currentCard = null;
+      resultEl.textContent = 'カードを読み込み中…';
+      // 既存の紙吹雪キャンバス除去
+      confettiOverlay.querySelectorAll('canvas').forEach(c=>c.remove());
+      winPopup.classList.remove('show');
+    }
+
+    /***** UI 構築 *****/
+    function renderLegend(){ legendEl.innerHTML=''; IMAGES.forEach((im,idx)=>{ const it=document.createElement('div'); it.className='item'; const sw=document.createElement('div'); sw.className='swatch img-'+(idx+1); sw.style.minWidth='28px'; sw.style.minHeight='28px'; const lab=document.createElement('div'); lab.innerText=im.label; lab.className='small'; it.appendChild(sw); it.appendChild(lab); legendEl.appendChild(it); }); }
+
+    function buildGrid(){ gridEl.innerHTML=''; cellCanvases = [];
+      for(let i=0;i<9;i++){
+        const cell = document.createElement('div'); cell.className='cell'; cell.dataset.index=i;
+        const inner = document.createElement('div'); inner.className='cell-inner';
+        const art = document.createElement('div'); art.className='art'; art.dataset.img=''; art.classList.add('img-5'); art.innerText='';
+        const cvs = document.createElement('canvas'); cvs.className='scratch'; cvs.dataset.index=i; cvs.style.touchAction='none';
+        inner.appendChild(art); inner.appendChild(cvs); cell.appendChild(inner); gridEl.appendChild(cell);
+        cellCanvases.push({canvas:cvs, art:art, cellEl:cell});
+      }
+    }
+
+    function generateCard(){
+      const id = 'CARD-'+Date.now().toString(36).toUpperCase();
+      const cells = Array.from({length:9}).map(()=> sampleByProb(DEFAULT_PROBS));
+      currentCard = {id, cells, revealed:Array.from({length:9}).map(()=>false), announced:false};
+      cardIdEl.innerText = id; renderCard(); resultEl.innerHTML = 'カードが表示されました。こすって削ってください。';
+    }
+
+    function sampleByProb(probs){ const r=Math.random(); let acc=0; for(const k in probs){ acc+=probs[k]; if(r<=acc) return k; } return Object.keys(probs).pop(); }
+
+    function renderCard(){ const cells = currentCard.cells; cellCanvases.forEach((entry,i)=>{ const art = entry.art; const cvs = entry.canvas; const cellEl = entry.cellEl; const imgId = cells[i];
+        // 見本（テキスト or 実画像）
+        art.dataset.img = imgId; art.innerText = imgId; art.className = 'art img-'+(IMAGES.findIndex(x=>x.id===imgId)+1);
+        const imgDef = IMAGES.find(x=>x.id===imgId);
+        if(imgDef && imgDef.path && /data:image\//.test(imgDef.path)){
+          art.innerHTML = '<img src="'+imgDef.path+'" style="width:100%;height:100%;object-fit:cover;display:block;">';
+        }
+        // キャンバス初期化
+        resizeCanvasToElement(cvs, cellEl);
+        initializeScratchCanvas(cvs,i);
+        cellEl.classList.remove('line-highlight');
+        showCanvas(cvs);
+      }); }
+
+    function resizeCanvasToElement(canvas, container){ const rect = container.querySelector('.cell-inner').getBoundingClientRect(); const w = rect.width; const h = rect.height; const ratio = window.devicePixelRatio || 1; canvas.width = Math.max(1, Math.round(w * ratio)); canvas.height = Math.max(1, Math.round(h * ratio)); canvas.style.width = w + 'px'; canvas.style.height = h + 'px'; const ctx = canvas.getContext('2d'); ctx.setTransform(ratio,0,0,ratio,0,0); }
+
+    function resizeAllCanvases(){ cellCanvases.forEach(entry=> resizeCanvasToElement(entry.canvas, entry.cellEl)); }
+
+    /***** スクラッチ処理 *****/
+    function initializeScratchCanvas(canvas, index){
+      const ctx = canvas.getContext('2d');
+      const ratio = window.devicePixelRatio || 1;
+      ctx.setTransform(ratio,0,0,ratio,0,0);
+
+      const cssW = canvas.width / ratio; const cssH = canvas.height / ratio;
+
+      // 覆いを確実に再描画（iOS/SafariのBFCache対策：必ず source-over でフル塗り）
+      ctx.globalCompositeOperation = 'source-over';
+      ctx.clearRect(0,0,cssW,cssH);
+      ctx.fillStyle = '#c1c7cc';
+      ctx.fillRect(0,0,cssW,cssH);
+      ctx.fillStyle = '#374151'; ctx.font = '700 14px sans-serif'; ctx.textAlign='center'; ctx.textBaseline='middle';
+      ctx.fillText('こすって削る', cssW/2, cssH/2);
+      canvas.style.opacity = '1';
+      canvas.style.pointerEvents = 'auto';
+
+      // 既存ハンドラ掃除
+      if(canvas._pointerDownHandler) canvas.removeEventListener('pointerdown', canvas._pointerDownHandler);
+      if(canvas._touchStartHandler) canvas.removeEventListener('touchstart', canvas._touchStartHandler);
+      if(canvas._pointerMoveHandler) canvas.removeEventListener('pointermove', canvas._pointerMoveHandler);
+      if(canvas._touchMoveHandler) canvas.removeEventListener('touchmove', canvas._touchMoveHandler);
+      if(canvas._pointerUpHandler) window.removeEventListener('pointerup', canvas._pointerUpHandler);
+      if(canvas._touchEndHandler) window.removeEventListener('touchend', canvas._touchEndHandler);
+
+      let drawing = false; let last = null;
+      function getLocalPosFromEvent(e){ const rect = canvas.getBoundingClientRect(); if(e.touches && e.touches.length){ return {x:e.touches[0].clientX-rect.left, y:e.touches[0].clientY-rect.top}; } return {x:e.clientX-rect.left, y:e.clientY-rect.top}; }
+      function scratchAt(x,y,r){ ctx.globalCompositeOperation = 'destination-out'; ctx.beginPath(); ctx.arc(x,y,r,0,Math.PI*2); ctx.fill(); ctx.closePath(); ctx.globalCompositeOperation = 'source-over'; }
+
+      const pointerMoveHandler = (e)=>{ if(!drawing) return; e.preventDefault(); const p=getLocalPosFromEvent(e); const dx=p.x-last.x, dy=p.y-last.y; const dist=Math.hypot(dx,dy); const steps=Math.max(Math.ceil(dist/(SCRATCH_RADIUS/2)),1); for(let s=0;s<steps;s++){ const t=s/steps; scratchAt(last.x+dx*t,last.y+dy*t,SCRATCH_RADIUS);} last=p; if(Math.random()<0.12) checkRevealPercent(index); };
+      const touchMoveHandler = (e)=> pointerMoveHandler(e);
+      const pointerUpHandler = ()=>{ if(!drawing) return; drawing=false; canvas.removeEventListener('pointermove', pointerMoveHandler); window.removeEventListener('pointerup', pointerUpHandler); canvas.removeEventListener('touchmove', touchMoveHandler); window.removeEventListener('touchend', touchEndHandler); checkRevealPercent(index); };
+      const touchEndHandler = ()=> pointerUpHandler();
+      const pointerDownHandler = (e)=>{ e.preventDefault(); drawing=true; last=getLocalPosFromEvent(e); scratchAt(last.x,last.y,SCRATCH_RADIUS); canvas.addEventListener('pointermove', pointerMoveHandler,{passive:false}); window.addEventListener('pointerup', pointerUpHandler); };
+      const touchStartHandler = (e)=>{ e.preventDefault(); drawing=true; last=getLocalPosFromEvent(e); scratchAt(last.x,last.y,SCRATCH_RADIUS); canvas.addEventListener('touchmove', touchMoveHandler,{passive:false}); window.addEventListener('touchend', touchEndHandler); };
+
+      canvas._pointerMoveHandler=pointerMoveHandler; canvas._touchMoveHandler=touchMoveHandler; canvas._pointerUpHandler=pointerUpHandler; canvas._touchEndHandler=touchEndHandler; canvas._pointerDownHandler=pointerDownHandler; canvas._touchStartHandler=touchStartHandler;
+
+      canvas.addEventListener('pointerdown', pointerDownHandler, {passive:false});
+      canvas.addEventListener('touchstart', touchStartHandler, {passive:false});
+    }
+
+    function checkRevealPercent(index){ const entry = cellCanvases[index]; const canvas = entry.canvas; const ctx = canvas.getContext('2d'); try{ const w = canvas.width; const h = canvas.height; const imageData = ctx.getImageData(0,0,w,h).data; let trans=0; let total=0; const step = 4 * 6; for(let i=3;i<imageData.length;i+=step){ if(imageData[i]===0) trans++; total++; } const cleared = trans/Math.max(total,1); if(cleared >= REVEAL_THRESHOLD){ if(!currentCard.revealed[index]){ currentCard.revealed[index] = true; hideCanvas(canvas); const allOpen = currentCard.revealed.every(v=>v===true); if(allOpen && !currentCard.announced){ currentCard.announced = true; announceResult(); } } } }catch(err){ console.warn('checkReveal failed', err); } }
+
+    /***** 判定：3つ揃いが1つも無ければ「はずれ」 *****/
+    function announceResult(){
+      const wins = [];
+      LINES.forEach(line=>{ const a = currentCard.cells[line[0]]; if(a && currentCard.cells[line[1]]===a && currentCard.cells[line[2]]===a){ wins.push({line,image:a}); } });
+      if(wins.length === 0){ resultEl.innerHTML = '<strong>はずれ</strong> — 全て開けましたが揃いがありませんでした。'; return; }
+      wins.sort((a,b)=> rankOf(a.image) - rankOf(b.image)); const best = wins[0]; resultEl.innerHTML = `<strong>当選！</strong> ${best.image} が揃いました。ランク: ${rankOf(best.image)}（小さいほど上位）`;
+      wins.forEach(w=> w.line.forEach(i=> cellCanvases[i].cellEl.classList.add('line-highlight')));
+      showWinPopup(best.image); launchConfetti();
+    }
+
+    function hideCanvas(canvas){ // BFCache対策：DOMから削除せず非表示に留める
+      canvas.style.pointerEvents='none';
+      canvas.style.opacity=0;
+    }
+    function showCanvas(canvas){ canvas.style.pointerEvents='auto'; canvas.style.opacity=1; }
+
+    function rankOf(imageId){ const im = IMAGES.find(x=>x.id===imageId); return im?im.rank||999:999; }
+
+    function showWinPopup(imageId){ const im = IMAGES.find(x=>x.id===imageId); winTitle.innerText = '当選おめでとうございます！'; winSub.innerText = im ? `${im.label} が揃いました` : `${imageId} が揃いました`; winPopup.classList.add('show'); setTimeout(()=> winPopup.classList.remove('show'), 5200); }
+
+    function launchConfetti(){ const overlay = confettiOverlay; const cvs = document.createElement('canvas'); cvs.width = overlay.clientWidth; cvs.height = overlay.clientHeight; cvs.style.width = '100%'; cvs.style.height = '100%'; cvs.style.display='block'; overlay.appendChild(cvs); const ctx = cvs.getContext('2d'); const particles = []; const count = 80; const w = cvs.width; const h = cvs.height; for(let i=0;i<count;i++){ particles.push({ x: Math.random()*w, y: -20 - Math.random()*h*0.2, vx: (Math.random()-0.5)*6, vy: 2+Math.random()*5, size: 6+Math.random()*8, color: CONFETTI_COLORS[Math.floor(Math.random()*CONFETTI_COLORS.length)], rotation: Math.random()*360, vr: (Math.random()-0.5)*10 }); }
+      let start = null; function draw(t){ if(!start) start=t; const elapsed = t-start; ctx.clearRect(0,0,cvs.width,cvs.height); particles.forEach(p=>{ p.x += p.vx; p.y += p.vy; p.vy += 0.08; p.rotation += p.vr; ctx.save(); ctx.translate(p.x,p.y); ctx.rotate(p.rotation*Math.PI/180); ctx.fillStyle = p.color; ctx.fillRect(-p.size/2, -p.size/2, p.size, p.size*0.6); ctx.restore(); }); if(elapsed < CONFETTI_DURATION){ requestAnimationFrame(draw); } else { const fadeStart = performance.now(); const fade = ()=>{ const fElapsed = performance.now()-fadeStart; const alpha = Math.max(1 - fElapsed/600, 0); cvs.style.opacity = alpha; if(alpha>0) requestAnimationFrame(fade); else { try{ overlay.removeChild(cvs); }catch(e){} } }; fade(); } }
+      requestAnimationFrame(draw);
+    }
+  </script>
+</body>
+</html>
